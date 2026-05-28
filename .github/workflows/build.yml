@@ -119,6 +119,9 @@ jobs:
                   path.write_text(s)
           PY
 
+          echo "=== Find gl4es_GetProcAddress definition ==="
+          grep -R "gl4es_GetProcAddress" -n src | head -80 || true
+
       - name: Build GL4ES for iOS arm64
         run: |
           cmake -B build \
