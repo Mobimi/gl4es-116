@@ -7,6 +7,7 @@ on:
 
 jobs:
   build:
+    name: Build libgl4es_test.dylib
     runs-on: macos-latest
 
     steps:
@@ -22,8 +23,13 @@ jobs:
 
       - name: Patch iOS compatibility
         run: |
+          # Remove hidden visibility from ios-cmake toolchain
           sed -i '' 's/-fvisibility=hidden//g' ios.toolchain.cmake
           sed -i '' 's/-fvisibility-inlines-hidden//g' ios.toolchain.cmake
+
+          # Try to disable visibility hiding in toolchain
+          sed -i '' 's/set(ENABLE_VISIBILITY TRUE/set(ENABLE_VISIBILITY FALSE/g' ios.toolchain.cmake || true
+          sed -i '' 's/ENABLE_VISIBILITY TRUE/ENABLE_VISIBILITY FALSE/g' ios.toolchain.cmake || true
 
           # Darwin/iOS does not support GCC alias attribute.
           # Patch only the two AliasDecl lines that fail in directstate.c if they exist.
@@ -31,23 +37,24 @@ jobs:
           from pathlib import Path
 
           p = Path("src/gl/directstate.c")
-          s = p.read_text()
+          if p.exists():
+              s = p.read_text()
 
-          s = s.replace(
-              "AliasDecl(void,gl4es_glEnableClientStatei,(GLenum array, GLuint index),gl4es_glEnableClientStateIndexed);",
-              """void APIENTRY_GL4ES gl4es_glEnableClientStatei(GLenum array, GLuint index) {
+              s = s.replace(
+                  "AliasDecl(void,gl4es_glEnableClientStatei,(GLenum array, GLuint index),gl4es_glEnableClientStateIndexed);",
+                  """void APIENTRY_GL4ES gl4es_glEnableClientStatei(GLenum array, GLuint index) {
               gl4es_glEnableClientStateIndexed(array, index);
           }"""
-          )
+              )
 
-          s = s.replace(
-              "AliasDecl(void,gl4es_glDisableClientStatei,(GLenum array, GLuint index),gl4es_glDisableClientStateIndexed);",
-              """void APIENTRY_GL4ES gl4es_glDisableClientStatei(GLenum array, GLuint index) {
+              s = s.replace(
+                  "AliasDecl(void,gl4es_glDisableClientStatei,(GLenum array, GLuint index),gl4es_glDisableClientStateIndexed);",
+                  """void APIENTRY_GL4ES gl4es_glDisableClientStatei(GLenum array, GLuint index) {
               gl4es_glDisableClientStateIndexed(array, index);
           }"""
-          )
+              )
 
-          p.write_text(s)
+              p.write_text(s)
           PY
 
           # Provide missing GLES/OpenGL compatibility symbols for iOS link
@@ -76,6 +83,40 @@ jobs:
 
           echo 'target_sources(GL PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gl/ios_compat.c)' >> src/CMakeLists.txt
 
+          # Force-export important GL4ES entry point if source contains it.
+          # Goal: make _gl4es_GetProcAddress become public T, not private t.
+          python3 << 'PY'
+          from pathlib import Path
+          import re
+
+          for path in Path("src").rglob("*.c"):
+              s = path.read_text(errors="ignore")
+              if "gl4es_GetProcAddress" not in s:
+                  continue
+
+              original = s
+
+              # Common forms:
+              # void* gl4es_GetProcAddress(...)
+              # void *gl4es_GetProcAddress(...)
+              # EXPORT void* gl4es_GetProcAddress(...)
+              s = re.sub(
+                  r'(?m)^(\s*)(void\s*\*\s*gl4es_GetProcAddress\s*\()',
+                  r'\1__attribute__((visibility("default"))) \2',
+                  s
+              )
+
+              s = re.sub(
+                  r'(?m)^(\s*)(void\*\s*gl4es_GetProcAddress\s*\()',
+                  r'\1__attribute__((visibility("default"))) \2',
+                  s
+              )
+
+              if s != original:
+                  print("Patched gl4es_GetProcAddress export in", path)
+                  path.write_text(s)
+          PY
+
       - name: Build GL4ES for iOS arm64
         run: |
           cmake -B build \
@@ -96,15 +137,16 @@ jobs:
           cmake --build build --config RelWithDebInfo --target GL
 
           cp lib/libGL.dylib ./libgl4es_test.dylib
+          cp lib/libGL.dylib ./libgl4es_116.dylib
 
       - name: Inspect dylib
         run: |
           echo "=== File info ==="
-          ls -lh libgl4es_test.dylib
+          ls -lh libgl4es_test.dylib libgl4es_116.dylib
           file libgl4es_test.dylib
 
           echo "=== Linked libraries ==="
-          otool -L libgl4es_test.dylib
+          otool -L libgl4es_test.dylib | tee linked_libraries.txt
 
           echo "=== Key symbols ==="
           nm -a libgl4es_test.dylib | grep -E "_gl4es_GetProcAddress|_gl4es_glGetString|_glGetString|_glClear|_glViewport|_gl4es_glClear|_gl4es_glViewport" | head -200 | tee key_symbols.txt || true
@@ -112,16 +154,27 @@ jobs:
           echo "=== Undefined symbols ==="
           nm -u libgl4es_test.dylib | tee undefined_symbols.txt || true
 
-      - name: Upload dylib
+          echo "=== Strings ==="
+          strings libgl4es_test.dylib | grep -Ei "GL4ES|LIBGL|GetProcAddress|eglGetProcAddress|glGetString|glClear|glViewport" | head -200 | tee strings_check.txt || true
+
+      - name: Upload dylib test
         uses: actions/upload-artifact@v4
         with:
           name: libgl4es_test
           path: libgl4es_test.dylib
+
+      - name: Upload dylib 116
+        uses: actions/upload-artifact@v4
+        with:
+          name: libgl4es_116
+          path: libgl4es_116.dylib
 
       - name: Upload inspect
         uses: actions/upload-artifact@v4
         with:
           name: gl4es_test_inspect
           path: |
+            linked_libraries.txt
             key_symbols.txt
             undefined_symbols.txt
+            strings_check.txt
