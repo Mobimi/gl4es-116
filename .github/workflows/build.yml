@@ -1,0 +1,127 @@
+name: Build GL4ES Amethyst Patch
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Install dependencies
+        run: brew install cmake wget
+
+      - name: Checkout this fork
+        uses: actions/checkout@v4
+
+      - name: Download iOS CMake toolchain
+        run: |
+          wget https://github.com/leetal/ios-cmake/raw/master/ios.toolchain.cmake
+
+      - name: Patch iOS compatibility
+        run: |
+          sed -i '' 's/-fvisibility=hidden//g' ios.toolchain.cmake
+          sed -i '' 's/-fvisibility-inlines-hidden//g' ios.toolchain.cmake
+
+          # Darwin/iOS does not support GCC alias attribute.
+          # Patch only the two AliasDecl lines that fail in directstate.c if they exist.
+          python3 << 'PY'
+          from pathlib import Path
+
+          p = Path("src/gl/directstate.c")
+          s = p.read_text()
+
+          s = s.replace(
+              "AliasDecl(void,gl4es_glEnableClientStatei,(GLenum array, GLuint index),gl4es_glEnableClientStateIndexed);",
+              """void APIENTRY_GL4ES gl4es_glEnableClientStatei(GLenum array, GLuint index) {
+              gl4es_glEnableClientStateIndexed(array, index);
+          }"""
+          )
+
+          s = s.replace(
+              "AliasDecl(void,gl4es_glDisableClientStatei,(GLenum array, GLuint index),gl4es_glDisableClientStateIndexed);",
+              """void APIENTRY_GL4ES gl4es_glDisableClientStatei(GLenum array, GLuint index) {
+              gl4es_glDisableClientStateIndexed(array, index);
+          }"""
+          )
+
+          p.write_text(s)
+          PY
+
+          # Provide missing GLES/OpenGL compatibility symbols for iOS link
+          cat > src/gl/ios_compat.c << 'EOF'
+          typedef unsigned int GLenum;
+          typedef int GLint;
+          typedef unsigned int GLuint;
+          typedef float GLfloat;
+
+          void gl4es_glGetFloatv(GLenum pname, GLfloat *params);
+          void gl4es_glStencilFunc(GLenum func, GLint ref, GLuint mask);
+          void gl4es_glStencilOp(GLenum fail, GLenum zfail, GLenum zpass);
+
+          void glGetFloatv(GLenum pname, GLfloat *params) {
+              gl4es_glGetFloatv(pname, params);
+          }
+
+          void glStencilFunc(GLenum func, GLint ref, GLuint mask) {
+              gl4es_glStencilFunc(func, ref, mask);
+          }
+
+          void glStencilOp(GLenum fail, GLenum zfail, GLenum zpass) {
+              gl4es_glStencilOp(fail, zfail, zpass);
+          }
+          EOF
+
+          echo 'target_sources(GL PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gl/ios_compat.c)' >> src/CMakeLists.txt
+
+      - name: Build GL4ES for iOS arm64
+        run: |
+          cmake -B build \
+            -DCMAKE_TOOLCHAIN_FILE=ios.toolchain.cmake \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+            -DPLATFORM=OS64 \
+            -DDEFAULT_ES=2 \
+            -DNOX11=ON \
+            -DNOEGL=OFF \
+            -DSTATICLIB=OFF \
+            -DCMAKE_C_VISIBILITY_PRESET=default \
+            -DCMAKE_VISIBILITY_INLINES_HIDDEN=OFF \
+            -DENABLE_VISIBILITY=OFF \
+            -DCMAKE_XCODE_ATTRIBUTE_GCC_SYMBOLS_PRIVATE_EXTERN=NO \
+            -DCMAKE_C_FLAGS="-fvisibility=default -Wno-error=implicit-function-declaration -Wno-error=unused-function -DNOGLX" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-undefined,dynamic_lookup -Wl,-export_dynamic"
+
+          cmake --build build --config RelWithDebInfo --target GL
+
+          cp lib/libGL.dylib ./libgl4es_test.dylib
+
+      - name: Inspect dylib
+        run: |
+          echo "=== File info ==="
+          ls -lh libgl4es_test.dylib
+          file libgl4es_test.dylib
+
+          echo "=== Linked libraries ==="
+          otool -L libgl4es_test.dylib
+
+          echo "=== Key symbols ==="
+          nm -a libgl4es_test.dylib | grep -E "_gl4es_GetProcAddress|_gl4es_glGetString|_glGetString|_glClear|_glViewport|_gl4es_glClear|_gl4es_glViewport" | head -200 | tee key_symbols.txt || true
+
+          echo "=== Undefined symbols ==="
+          nm -u libgl4es_test.dylib | tee undefined_symbols.txt || true
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: libgl4es_test
+          path: libgl4es_test.dylib
+
+      - name: Upload inspect
+        uses: actions/upload-artifact@v4
+        with:
+          name: gl4es_test_inspect
+          path: |
+            key_symbols.txt
+            undefined_symbols.txt
