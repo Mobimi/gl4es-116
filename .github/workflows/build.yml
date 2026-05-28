@@ -21,15 +21,41 @@ jobs:
         run: |
           wget https://github.com/leetal/ios-cmake/raw/master/ios.toolchain.cmake
 
-      - name: Patch iOS compatibility
+      - name: Patch iOS compatibility and exports
         run: |
           # Remove hidden visibility from ios-cmake toolchain
           sed -i '' 's/-fvisibility=hidden//g' ios.toolchain.cmake
           sed -i '' 's/-fvisibility-inlines-hidden//g' ios.toolchain.cmake
-
-          # Try to disable visibility hiding in toolchain
           sed -i '' 's/set(ENABLE_VISIBILITY TRUE/set(ENABLE_VISIBILITY FALSE/g' ios.toolchain.cmake || true
           sed -i '' 's/ENABLE_VISIBILITY TRUE/ENABLE_VISIBILITY FALSE/g' ios.toolchain.cmake || true
+
+          # Patch GL4ES attributes so Apple/iOS exports symbols publicly.
+          python3 << 'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("src/gl/attributes.h")
+          s = p.read_text()
+
+          # On upstream GL4ES, __APPLE__ makes EXPORT blank.
+          # Force EXPORT to default visibility on Apple.
+          s = s.replace(
+              "#if defined(__EMSCRIPTEN__) || defined(__APPLE__)\n#define EXPORT",
+              "#if defined(__EMSCRIPTEN__)\n#define EXPORT\n#elif defined(__APPLE__)\n#define EXPORT __attribute__((visibility(\"default\")))"
+          )
+
+          # When AliasExport falls back on Apple, make wrapper functions exported.
+          s = s.replace(
+              "#define AliasExport(RET,NAME,X,DEF) RET NAME##X DEF",
+              "#define AliasExport(RET,NAME,X,DEF) EXPORT RET APIENTRY_GL4ES NAME##X DEF"
+          )
+          s = s.replace(
+              "#define NonAliasExportDecl(RET,NAME,DEF) RET NAME DEF",
+              "#define NonAliasExportDecl(RET,NAME,DEF) EXPORT RET APIENTRY_GL4ES NAME DEF"
+          )
+
+          p.write_text(s)
+          PY
 
           # Darwin/iOS does not support GCC alias attribute.
           # Patch only the two AliasDecl lines that fail in directstate.c if they exist.
@@ -57,6 +83,66 @@ jobs:
               p.write_text(s)
           PY
 
+          # Force-export gl4es_GetProcAddress directly, no guessing.
+          python3 << 'PY'
+          from pathlib import Path
+          import re
+
+          patched = False
+
+          for path in Path("src").rglob("*.c"):
+              s = path.read_text(errors="ignore")
+              if "gl4es_GetProcAddress" not in s:
+                  continue
+
+              original = s
+
+              # Remove static if the function was declared static.
+              s = re.sub(
+                  r'(?m)^\s*static\s+(void\s*\*\s*(?:APIENTRY_GL4ES\s*)?gl4es_GetProcAddress\s*\()',
+                  r'EXPORT \1',
+                  s
+              )
+
+              # EXPORT void* gl4es_GetProcAddress(...)
+              s = re.sub(
+                  r'(?m)^(\s*)(void\s*\*\s*gl4es_GetProcAddress\s*\()',
+                  r'\1EXPORT \2',
+                  s
+              )
+
+              # EXPORT void * APIENTRY_GL4ES gl4es_GetProcAddress(...)
+              s = re.sub(
+                  r'(?m)^(\s*)(void\s*\*\s*APIENTRY_GL4ES\s+gl4es_GetProcAddress\s*\()',
+                  r'\1EXPORT \2',
+                  s
+              )
+
+              # EXPORT void* APIENTRY_GL4ES gl4es_GetProcAddress(...)
+              s = re.sub(
+                  r'(?m)^(\s*)(void\*\s*APIENTRY_GL4ES\s+gl4es_GetProcAddress\s*\()',
+                  r'\1EXPORT \2',
+                  s
+              )
+
+              if s != original:
+                  print("Patched gl4es_GetProcAddress export in", path)
+                  patched = True
+                  path.write_text(s)
+
+          if not patched:
+              print("WARNING: gl4es_GetProcAddress definition was not patched.")
+              print("Matches found:")
+              for path in Path("src").rglob("*"):
+                  if path.is_file():
+                      txt = path.read_text(errors="ignore")
+                      if "gl4es_GetProcAddress" in txt:
+                          print(path)
+                          for i, line in enumerate(txt.splitlines(), 1):
+                              if "gl4es_GetProcAddress" in line:
+                                  print(f"{i}: {line}")
+          PY
+
           # Provide missing GLES/OpenGL compatibility symbols for iOS link
           cat > src/gl/ios_compat.c << 'EOF'
           typedef unsigned int GLenum;
@@ -68,14 +154,17 @@ jobs:
           void gl4es_glStencilFunc(GLenum func, GLint ref, GLuint mask);
           void gl4es_glStencilOp(GLenum fail, GLenum zfail, GLenum zpass);
 
+          __attribute__((visibility("default")))
           void glGetFloatv(GLenum pname, GLfloat *params) {
               gl4es_glGetFloatv(pname, params);
           }
 
+          __attribute__((visibility("default")))
           void glStencilFunc(GLenum func, GLint ref, GLuint mask) {
               gl4es_glStencilFunc(func, ref, mask);
           }
 
+          __attribute__((visibility("default")))
           void glStencilOp(GLenum fail, GLenum zfail, GLenum zpass) {
               gl4es_glStencilOp(fail, zfail, zpass);
           }
@@ -83,43 +172,12 @@ jobs:
 
           echo 'target_sources(GL PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gl/ios_compat.c)' >> src/CMakeLists.txt
 
-          # Force-export important GL4ES entry point if source contains it.
-          echo "=== Find gl4es_GetProcAddress definition ==="
-          grep -R "gl4es_GetProcAddress" -n src | head -50 || true
-          # Goal: make _gl4es_GetProcAddress become public T, not private t.
-          python3 << 'PY'
-          from pathlib import Path
-          import re
+          echo "=== Verify patched attributes.h ==="
+          grep -n "define EXPORT" src/gl/attributes.h | head -20 || true
+          grep -n "define AliasExport" src/gl/attributes.h | head -20 || true
+          grep -n "define NonAliasExportDecl" src/gl/attributes.h | head -20 || true
 
-          for path in Path("src").rglob("*.c"):
-              s = path.read_text(errors="ignore")
-              if "gl4es_GetProcAddress" not in s:
-                  continue
-
-              original = s
-
-              # Common forms:
-              # void* gl4es_GetProcAddress(...)
-              # void *gl4es_GetProcAddress(...)
-              # EXPORT void* gl4es_GetProcAddress(...)
-              s = re.sub(
-                  r'(?m)^(\s*)(void\s*\*\s*gl4es_GetProcAddress\s*\()',
-                  r'\1__attribute__((visibility("default"))) \2',
-                  s
-              )
-
-              s = re.sub(
-                  r'(?m)^(\s*)(void\*\s*gl4es_GetProcAddress\s*\()',
-                  r'\1__attribute__((visibility("default"))) \2',
-                  s
-              )
-
-              if s != original:
-                  print("Patched gl4es_GetProcAddress export in", path)
-                  path.write_text(s)
-          PY
-
-          echo "=== Find gl4es_GetProcAddress definition ==="
+          echo "=== Find gl4es_GetProcAddress definition after patch ==="
           grep -R "gl4es_GetProcAddress" -n src | head -80 || true
 
       - name: Build GL4ES for iOS arm64
@@ -154,13 +212,16 @@ jobs:
           otool -L libgl4es_test.dylib | tee linked_libraries.txt
 
           echo "=== Key symbols ==="
-          nm -a libgl4es_test.dylib | grep -E "_gl4es_GetProcAddress|_gl4es_glGetString|_glGetString|_glClear|_glViewport|_gl4es_glClear|_gl4es_glViewport" | head -200 | tee key_symbols.txt || true
+          nm -a libgl4es_test.dylib | grep -E "_gl4es_GetProcAddress|_gl4es_glGetString|_glGetString|_glClear|_glViewport|_gl4es_glClear|_gl4es_glViewport|_glStencilFunc|_glStencilOp|_glGetFloatv" | head -250 | tee key_symbols.txt || true
+
+          echo "=== Dynamic external symbols ==="
+          nm -gU libgl4es_test.dylib | grep -E "_gl4es_GetProcAddress|_glGetString|_glClear|_glViewport|_glStencilFunc|_glStencilOp|_glGetFloatv" | head -250 | tee exported_symbols.txt || true
 
           echo "=== Undefined symbols ==="
           nm -u libgl4es_test.dylib | tee undefined_symbols.txt || true
 
           echo "=== Strings ==="
-          strings libgl4es_test.dylib | grep -Ei "GL4ES|LIBGL|GetProcAddress|eglGetProcAddress|glGetString|glClear|glViewport" | head -200 | tee strings_check.txt || true
+          strings libgl4es_test.dylib | grep -Ei "GL4ES|LIBGL|GetProcAddress|eglGetProcAddress|glGetString|glClear|glViewport" | head -250 | tee strings_check.txt || true
 
       - name: Upload dylib test
         uses: actions/upload-artifact@v4
@@ -181,5 +242,6 @@ jobs:
           path: |
             linked_libraries.txt
             key_symbols.txt
+            exported_symbols.txt
             undefined_symbols.txt
             strings_check.txt
