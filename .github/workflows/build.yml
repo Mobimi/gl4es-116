@@ -84,6 +84,8 @@ jobs:
           echo 'target_sources(GL PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gl/ios_compat.c)' >> src/CMakeLists.txt
 
           # Force-export important GL4ES entry point if source contains it.
+          echo "=== Find gl4es_GetProcAddress definition ==="
+          grep -R "gl4es_GetProcAddress" -n src | head -50 || true
           # Goal: make _gl4es_GetProcAddress become public T, not private t.
           python3 << 'PY'
           from pathlib import Path
