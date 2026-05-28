@@ -143,20 +143,86 @@ jobs:
                                   print(f"{i}: {line}")
           PY
 
-          # Provide missing GLES/OpenGL compatibility symbols for iOS link
-          cat > src/gl/ios_compat.c << 'EOF'
+          # Provide exported OpenGL symbols for LWJGL/iOS
+          cat > src/gl/ios_exports.c << 'EOF'
           typedef unsigned int GLenum;
           typedef int GLint;
           typedef unsigned int GLuint;
           typedef float GLfloat;
+          typedef unsigned int GLbitfield;
+          typedef int GLsizei;
+          typedef char GLchar;
+          typedef unsigned char GLboolean;
+          typedef float GLclampf;
+          typedef void GLvoid;
 
+          void *gl4es_GetProcAddress(const char *name);
+
+          const unsigned char *gl4es_glGetString(GLenum name);
+          void gl4es_glClear(GLbitfield mask);
+          void gl4es_glViewport(GLint x, GLint y, GLsizei width, GLsizei height);
+          void gl4es_glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
+          void gl4es_glEnable(GLenum cap);
+          void gl4es_glDisable(GLenum cap);
           void gl4es_glGetFloatv(GLenum pname, GLfloat *params);
+          void gl4es_glGetIntegerv(GLenum pname, GLint *params);
+          GLenum gl4es_glGetError(void);
           void gl4es_glStencilFunc(GLenum func, GLint ref, GLuint mask);
           void gl4es_glStencilOp(GLenum fail, GLenum zfail, GLenum zpass);
 
           __attribute__((visibility("default")))
+          void *gl4es_GetProcAddress_export(const char *name) {
+              return gl4es_GetProcAddress(name);
+          }
+
+          __attribute__((visibility("default")))
+          void *glGetProcAddress(const char *name) {
+              return gl4es_GetProcAddress(name);
+          }
+
+          __attribute__((visibility("default")))
+          const unsigned char *glGetString(GLenum name) {
+              return gl4es_glGetString(name);
+          }
+
+          __attribute__((visibility("default")))
+          void glClear(GLbitfield mask) {
+              gl4es_glClear(mask);
+          }
+
+          __attribute__((visibility("default")))
+          void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
+              gl4es_glViewport(x, y, width, height);
+          }
+
+          __attribute__((visibility("default")))
+          void glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha) {
+              gl4es_glClearColor(red, green, blue, alpha);
+          }
+
+          __attribute__((visibility("default")))
+          void glEnable(GLenum cap) {
+              gl4es_glEnable(cap);
+          }
+
+          __attribute__((visibility("default")))
+          void glDisable(GLenum cap) {
+              gl4es_glDisable(cap);
+          }
+
+          __attribute__((visibility("default")))
           void glGetFloatv(GLenum pname, GLfloat *params) {
               gl4es_glGetFloatv(pname, params);
+          }
+
+          __attribute__((visibility("default")))
+          void glGetIntegerv(GLenum pname, GLint *params) {
+              gl4es_glGetIntegerv(pname, params);
+          }
+
+          __attribute__((visibility("default")))
+          GLenum glGetError(void) {
+              return gl4es_glGetError();
           }
 
           __attribute__((visibility("default")))
@@ -170,15 +236,7 @@ jobs:
           }
           EOF
 
-          echo 'target_sources(GL PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gl/ios_compat.c)' >> src/CMakeLists.txt
-
-          echo "=== Verify patched attributes.h ==="
-          grep -n "define EXPORT" src/gl/attributes.h | head -20 || true
-          grep -n "define AliasExport" src/gl/attributes.h | head -20 || true
-          grep -n "define NonAliasExportDecl" src/gl/attributes.h | head -20 || true
-
-          echo "=== Find gl4es_GetProcAddress definition after patch ==="
-          grep -R "gl4es_GetProcAddress" -n src | head -80 || true
+          echo 'target_sources(GL PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gl/ios_exports.c)' >> src/CMakeLists.txt
 
       - name: Build GL4ES for iOS arm64
         run: |
