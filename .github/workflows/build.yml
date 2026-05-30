@@ -3,11 +3,11 @@ name: Build GL4ES Amethyst Patch
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
 
 jobs:
   build:
-    name: Build libgl4es_test.dylib
+    name: Build libgl4es_116.dylib
     runs-on: macos-latest
 
     steps:
@@ -32,33 +32,30 @@ jobs:
           # Patch GL4ES attributes so Apple/iOS exports symbols publicly.
           python3 << 'PY'
           from pathlib import Path
-          import re
 
           p = Path("src/gl/attributes.h")
           s = p.read_text()
 
-          # On upstream GL4ES, __APPLE__ makes EXPORT blank.
-          # Force EXPORT to default visibility on Apple.
           s = s.replace(
               "#if defined(__EMSCRIPTEN__) || defined(__APPLE__)\n#define EXPORT",
               "#if defined(__EMSCRIPTEN__)\n#define EXPORT\n#elif defined(__APPLE__)\n#define EXPORT __attribute__((visibility(\"default\")))"
           )
 
-          # When AliasExport falls back on Apple, make wrapper functions exported.
           s = s.replace(
               "#define AliasExport(RET,NAME,X,DEF) RET NAME##X DEF",
               "#define AliasExport(RET,NAME,X,DEF) EXPORT RET APIENTRY_GL4ES NAME##X DEF"
           )
+
           s = s.replace(
               "#define NonAliasExportDecl(RET,NAME,DEF) RET NAME DEF",
               "#define NonAliasExportDecl(RET,NAME,DEF) EXPORT RET APIENTRY_GL4ES NAME DEF"
           )
 
           p.write_text(s)
+          print("Patched attributes.h")
           PY
 
-          # Darwin/iOS does not support GCC alias attribute.
-          # Patch only the two AliasDecl lines that fail in directstate.c if they exist.
+          # Darwin/iOS does not support GCC alias attribute in these lines.
           python3 << 'PY'
           from pathlib import Path
 
@@ -81,9 +78,10 @@ jobs:
               )
 
               p.write_text(s)
+              print("Patched directstate.c")
           PY
 
-          # Force-export gl4es_GetProcAddress directly, no guessing.
+          # Export gl4es_GetProcAddress directly if possible.
           python3 << 'PY'
           from pathlib import Path
           import re
@@ -97,28 +95,24 @@ jobs:
 
               original = s
 
-              # Remove static if the function was declared static.
               s = re.sub(
                   r'(?m)^\s*static\s+(void\s*\*\s*(?:APIENTRY_GL4ES\s*)?gl4es_GetProcAddress\s*\()',
                   r'EXPORT \1',
                   s
               )
 
-              # EXPORT void* gl4es_GetProcAddress(...)
               s = re.sub(
                   r'(?m)^(\s*)(void\s*\*\s*gl4es_GetProcAddress\s*\()',
                   r'\1EXPORT \2',
                   s
               )
 
-              # EXPORT void * APIENTRY_GL4ES gl4es_GetProcAddress(...)
               s = re.sub(
                   r'(?m)^(\s*)(void\s*\*\s*APIENTRY_GL4ES\s+gl4es_GetProcAddress\s*\()',
                   r'\1EXPORT \2',
                   s
               )
 
-              # EXPORT void* APIENTRY_GL4ES gl4es_GetProcAddress(...)
               s = re.sub(
                   r'(?m)^(\s*)(void\*\s*APIENTRY_GL4ES\s+gl4es_GetProcAddress\s*\()',
                   r'\1EXPORT \2',
@@ -131,19 +125,10 @@ jobs:
                   path.write_text(s)
 
           if not patched:
-              print("WARNING: gl4es_GetProcAddress definition was not patched.")
-              print("Matches found:")
-              for path in Path("src").rglob("*"):
-                  if path.is_file():
-                      txt = path.read_text(errors="ignore")
-                      if "gl4es_GetProcAddress" in txt:
-                          print(path)
-                          for i, line in enumerate(txt.splitlines(), 1):
-                              if "gl4es_GetProcAddress" in line:
-                                  print(f"{i}: {line}")
+              print("WARNING: gl4es_GetProcAddress definition was not patched directly.")
           PY
 
-          # Provide exported OpenGL symbols for LWJGL/iOS
+          # Provide exported OpenGL / GLX / EGL proc-address symbols for LWJGL/iOS.
           cat > src/gl/ios_exports.c << 'EOF'
           typedef unsigned int GLenum;
           typedef int GLint;
@@ -151,11 +136,8 @@ jobs:
           typedef float GLfloat;
           typedef unsigned int GLbitfield;
           typedef int GLsizei;
-          typedef char GLchar;
-          typedef unsigned char GLboolean;
-          typedef float GLclampf;
-          typedef void GLvoid;
 
+          __attribute__((visibility("default")))
           void *gl4es_GetProcAddress(const char *name);
 
           const unsigned char *gl4es_glGetString(GLenum name);
@@ -177,6 +159,21 @@ jobs:
 
           __attribute__((visibility("default")))
           void *glGetProcAddress(const char *name) {
+              return gl4es_GetProcAddress(name);
+          }
+
+          __attribute__((visibility("default")))
+          void *glXGetProcAddress(const unsigned char *name) {
+              return gl4es_GetProcAddress((const char *)name);
+          }
+
+          __attribute__((visibility("default")))
+          void *glXGetProcAddressARB(const unsigned char *name) {
+              return gl4es_GetProcAddress((const char *)name);
+          }
+
+          __attribute__((visibility("default")))
+          void *eglGetProcAddress(const char *name) {
               return gl4es_GetProcAddress(name);
           }
 
@@ -236,16 +233,21 @@ jobs:
           }
           EOF
 
-          echo 'target_sources(GL PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gl/ios_exports.c)' >> src/CMakeLists.txt
-
-          # Force-enable GLX shim files for iOS/non-Linux too
+          # Inject ios_exports.c and GLX shim before GL target is created.
           python3 << 'PY'
           from pathlib import Path
 
           p = Path("src/CMakeLists.txt")
           s = p.read_text()
 
+          marker = "add_library(GL SHARED ${GL_SRC})"
+
           inject = '''
+          # iOS / Amethyst compatibility exports
+          list(APPEND GL_SRC
+              ${CMAKE_CURRENT_SOURCE_DIR}/gl/ios_exports.c
+          )
+
           # iOS / Amethyst GLX shim
           include_directories(glx)
           list(APPEND GL_SRC
@@ -262,21 +264,19 @@ jobs:
           )
           '''
 
-          marker = 'add_library(GL SHARED ${GL_SRC})'
-
-          if 'iOS / Amethyst GLX shim' in s:
-              print("GLX shim already injected")
+          if "gl/ios_exports.c" in s and "iOS / Amethyst GLX shim" in s:
+              print("iOS exports and GLX shim already injected")
           elif marker in s:
-              s = s.replace(marker, inject + '\n' + marker, 1)
+              s = s.replace(marker, inject + "\n" + marker, 1)
               p.write_text(s)
-              print("Injected iOS/Amethyst GLX shim before GL target")
+              print("Injected ios_exports.c and GLX shim before GL target")
           else:
               print("Could not find add_library marker")
-              print(s[-1500:])
+              print(s[-2000:])
               raise SystemExit(1)
           PY
 
-          # iOS does not allow system(), remove xrefresh call from GLX shim
+          # iOS does not allow system(), remove xrefresh call from GLX shim.
           python3 << 'PY'
           from pathlib import Path
 
@@ -286,11 +286,6 @@ jobs:
           s = s.replace(
               '    int dummy = system("xrefresh");',
               '    int dummy = 0;'
-          )
-
-          s = s.replace(
-              '    (void)dummy;',
-              '    (void)dummy;'
           )
 
           p.write_text(s)
@@ -307,46 +302,55 @@ jobs:
             -DNOX11=ON \
             -DNOEGL=ON \
             -DSTATICLIB=OFF \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_C_VISIBILITY_PRESET=default \
             -DCMAKE_VISIBILITY_INLINES_HIDDEN=OFF \
             -DENABLE_VISIBILITY=OFF \
             -DCMAKE_XCODE_ATTRIBUTE_GCC_SYMBOLS_PRIVATE_EXTERN=NO \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
             -DCMAKE_C_FLAGS="-fvisibility=default -Wno-error=implicit-function-declaration -Wno-error=unused-function" \
             -DCMAKE_SHARED_LINKER_FLAGS="-framework OpenGLES -framework Foundation -framework QuartzCore -framework UIKit"
 
           cmake --build build --config RelWithDebInfo --target GL
 
-          cp lib/libGL.dylib ./libgl4es_test.dylib
           cp lib/libGL.dylib ./libgl4es_116.dylib
+          install_name_tool -id @rpath/libgl4es_116.dylib ./libgl4es_116.dylib
 
       - name: Inspect dylib
         run: |
           echo "=== File info ==="
-          ls -lh libgl4es_test.dylib libgl4es_116.dylib
-          file libgl4es_test.dylib
+          ls -lh libgl4es_116.dylib
+          file libgl4es_116.dylib
+
+          echo "=== Install name ==="
+          otool -D libgl4es_116.dylib | tee install_name.txt
 
           echo "=== Linked libraries ==="
-          otool -L libgl4es_test.dylib | tee linked_libraries.txt
+          otool -L libgl4es_116.dylib | tee linked_libraries.txt
 
           echo "=== Key symbols ==="
-          nm -a libgl4es_test.dylib | grep -E "_gl4es_GetProcAddress|_gl4es_glGetString|_glGetString|_glClear|_glViewport|_gl4es_glClear|_gl4es_glViewport|_glStencilFunc|_glStencilOp|_glGetFloatv" | head -250 | tee key_symbols.txt || true
+          nm -a libgl4es_116.dylib | grep -E "_gl4es_GetProcAddress|_glGetProcAddress|_glXGetProcAddress|_glXGetProcAddressARB|_eglGetProcAddress|_glXCreateContext|_glXMakeCurrent|_glXSwapBuffers|_glGetString|_glClear|_glViewport|_glStencilFunc|_glStencilOp|_glGetFloatv" | tee key_symbols.txt || true
 
           echo "=== Dynamic external symbols ==="
-          nm -gU libgl4es_test.dylib | grep -E "_gl4es_GetProcAddress|_glGetString|_glClear|_glViewport|_glStencilFunc|_glStencilOp|_glGetFloatv" | head -250 | tee exported_symbols.txt || true
+          nm -gU libgl4es_116.dylib | grep -E "_gl4es_GetProcAddress|_glGetProcAddress|_glXGetProcAddress|_glXGetProcAddressARB|_eglGetProcAddress|_glXCreateContext|_glXMakeCurrent|_glXSwapBuffers|_glGetString|_glClear|_glViewport|_glStencilFunc|_glStencilOp|_glGetFloatv" | tee exported_symbols.txt || true
+
+          echo "=== Required symbol check ==="
+          REQUIRED="_glGetProcAddress _glXGetProcAddress _glXGetProcAddressARB _eglGetProcAddress _glGetString _glViewport"
+          for sym in $REQUIRED; do
+            if ! nm -gU libgl4es_116.dylib | grep -q "$sym"; then
+              echo "Missing required symbol: $sym"
+              exit 1
+            fi
+          done
 
           echo "=== Undefined symbols ==="
-          nm -u libgl4es_test.dylib | tee undefined_symbols.txt || true
+          nm -u libgl4es_116.dylib | tee undefined_symbols.txt || true
 
           echo "=== Strings ==="
-          strings libgl4es_test.dylib | grep -Ei "GL4ES|LIBGL|GetProcAddress|eglGetProcAddress|glGetString|glClear|glViewport" | head -250 | tee strings_check.txt || true
+          strings libgl4es_116.dylib | grep -Ei "GL4ES|LIBGL|GetProcAddress|eglGetProcAddress|glXGetProcAddress|glGetString|glClear|glViewport" | head -300 | tee strings_check.txt || true
 
-      - name: Upload dylib test
-        uses: actions/upload-artifact@v4
-        with:
-          name: libgl4es_test
-          path: libgl4es_test.dylib
-
-      - name: Upload dylib 116
+      - name: Upload libgl4es_116
         uses: actions/upload-artifact@v4
         with:
           name: libgl4es_116
@@ -355,8 +359,9 @@ jobs:
       - name: Upload inspect
         uses: actions/upload-artifact@v4
         with:
-          name: gl4es_test_inspect
+          name: gl4es_116_inspect
           path: |
+            install_name.txt
             linked_libraries.txt
             key_symbols.txt
             exported_symbols.txt
