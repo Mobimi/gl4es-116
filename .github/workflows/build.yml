@@ -246,14 +246,14 @@ jobs:
             -DPLATFORM=OS64 \
             -DDEFAULT_ES=2 \
             -DNOX11=ON \
-            -DNOEGL=OFF \
+            -DNOEGL=ON \
             -DSTATICLIB=OFF \
             -DCMAKE_C_VISIBILITY_PRESET=default \
             -DCMAKE_VISIBILITY_INLINES_HIDDEN=OFF \
             -DENABLE_VISIBILITY=OFF \
             -DCMAKE_XCODE_ATTRIBUTE_GCC_SYMBOLS_PRIVATE_EXTERN=NO \
             -DCMAKE_C_FLAGS="-fvisibility=default -Wno-error=implicit-function-declaration -Wno-error=unused-function -DNOGLX" \
-            -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-undefined,dynamic_lookup -Wl,-export_dynamic"
+            -DCMAKE_SHARED_LINKER_FLAGS="-framework OpenGLES -framework Foundation -framework QuartzCore -framework UIKit"
 
           cmake --build build --config RelWithDebInfo --target GL
 
