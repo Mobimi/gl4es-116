@@ -238,6 +238,29 @@ jobs:
 
           echo 'target_sources(GL PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/gl/ios_exports.c)' >> src/CMakeLists.txt
 
+          # Patch src/CMakeLists.txt to add iOS/Amethyst GLX shim
+          python3 << 'PY'
+          from pathlib import Path
+
+          p = Path("src/CMakeLists.txt")
+          s = p.read_text()
+
+          old = 'else() include_directories(glx) list(APPEND GL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/glx/hardext.c ) message(STATUS "Not on Linux: building without GLX support.") endif()'
+
+          new = 'else() include_directories(glx) list(APPEND GL_SRC ${CMAKE_CURRENT_SOURCE_DIR}/glx/hardext.c ${CMAKE_CURRENT_SOURCE_DIR}/glx/gbm.c ${CMAKE_CURRENT_SOURCE_DIR}/glx/glx.c ${CMAKE_CURRENT_SOURCE_DIR}/glx/lookup.c ${CMAKE_CURRENT_SOURCE_DIR}/glx/streaming.c ) list(APPEND GL_H ${CMAKE_CURRENT_SOURCE_DIR}/glx/glx.h ${CMAKE_CURRENT_SOURCE_DIR}/glx/hardext.h ${CMAKE_CURRENT_SOURCE_DIR}/glx/streaming.h ) message(STATUS "Not on Linux: building with iOS/Amethyst GLX shim.") endif()'
+
+          if old not in s:
+              print("Could not find exact GLX block.")
+              i = s.find("GLX")
+              print(s[max(0, i-300):i+300] if i != -1 else s[:800])
+              raise SystemExit(1)
+
+          s = s.replace(old, new)
+          p.write_text(s)
+
+          print("Patched src/CMakeLists.txt: added iOS/Amethyst GLX shim")
+          PY
+
       - name: Build GL4ES for iOS arm64
         run: |
           cmake -B build \
