@@ -276,6 +276,27 @@ jobs:
               raise SystemExit(1)
           PY
 
+          # iOS does not allow system(), remove xrefresh call from GLX shim
+          python3 << 'PY'
+          from pathlib import Path
+
+          p = Path("src/glx/glx.c")
+          s = p.read_text()
+
+          s = s.replace(
+              '    int dummy = system("xrefresh");',
+              '    int dummy = 0;'
+          )
+
+          s = s.replace(
+              '    (void)dummy;',
+              '    (void)dummy;'
+          )
+
+          p.write_text(s)
+          print("Patched glx.c: removed system(\"xrefresh\") for iOS")
+          PY
+
       - name: Build GL4ES for iOS arm64
         run: |
           cmake -B build \
@@ -290,7 +311,7 @@ jobs:
             -DCMAKE_VISIBILITY_INLINES_HIDDEN=OFF \
             -DENABLE_VISIBILITY=OFF \
             -DCMAKE_XCODE_ATTRIBUTE_GCC_SYMBOLS_PRIVATE_EXTERN=NO \
-            -DCMAKE_C_FLAGS="-fvisibility=default -Wno-error=implicit-function-declaration -Wno-error=unused-function -DNOGLX" \
+            -DCMAKE_C_FLAGS="-fvisibility=default -Wno-error=implicit-function-declaration -Wno-error=unused-function" \
             -DCMAKE_SHARED_LINKER_FLAGS="-framework OpenGLES -framework Foundation -framework QuartzCore -framework UIKit"
 
           cmake --build build --config RelWithDebInfo --target GL
