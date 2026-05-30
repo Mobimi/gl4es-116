@@ -128,6 +128,29 @@ jobs:
               print("WARNING: gl4es_GetProcAddress definition was not patched directly.")
           PY
 
+          # Force GL4ES loader to use OpenGLES.framework on iOS.
+          python3 << 'PY'
+          from pathlib import Path
+
+          p = Path("src/gl/loader.c")
+          s = p.read_text()
+
+          framework = "/System/Library/Frameworks/OpenGLES.framework/OpenGLES"
+
+          for old in [
+              "libGLESv2.so",
+              "libGLESv1_CM.so",
+              "libGLESv2",
+              "libGLESv1_CM",
+              "libGLES_CM",
+              "libGLESv2_CM"
+          ]:
+              s = s.replace(old, framework)
+
+          p.write_text(s)
+          print("Patched loader.c: forced OpenGLES.framework path on iOS")
+          PY
+
           # Provide exported OpenGL / GLX / EGL proc-address symbols for LWJGL/iOS.
           cat > src/gl/ios_exports.c << 'EOF'
           #include <stdio.h>
@@ -311,6 +334,7 @@ jobs:
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DPLATFORM=OS64 \
             -DDEFAULT_ES=2 \
+            -DDEFAULT_GLES="/System/Library/Frameworks/OpenGLES.framework/OpenGLES" \
             -DNOX11=ON \
             -DNOEGL=ON \
             -DSTATICLIB=OFF \
@@ -321,7 +345,7 @@ jobs:
             -DCMAKE_XCODE_ATTRIBUTE_GCC_SYMBOLS_PRIVATE_EXTERN=NO \
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
-            -DCMAKE_C_FLAGS="-fvisibility=default -Wno-error=implicit-function-declaration -Wno-error=unused-function" \
+            -DCMAKE_C_FLAGS="-fvisibility=default -Wno-error=implicit-function-declaration -Wno-error=unused-function -DDEFAULT_GLES='\"/System/Library/Frameworks/OpenGLES.framework/OpenGLES\"'" \
             -DCMAKE_SHARED_LINKER_FLAGS="-framework OpenGLES -framework Foundation -framework QuartzCore -framework UIKit"
 
           cmake --build build --config RelWithDebInfo --target GL
@@ -342,13 +366,13 @@ jobs:
           otool -L libgl4es_116.dylib | tee linked_libraries.txt
 
           echo "=== Key symbols ==="
-          nm -a libgl4es_116.dylib | grep -E "_gl4es_GetProcAddress|_glGetProcAddress|_glXGetProcAddress|_glXGetProcAddressARB|_eglGetProcAddress|_glXCreateContext|_glXMakeCurrent|_glXSwapBuffers|_glGetString|_glClear|_glViewport|_glStencilFunc|_glStencilOp|_glGetFloatv" | tee key_symbols.txt || true
+          nm -a libgl4es_116.dylib | grep -E "_gl4es_GetProcAddress|_glGetProcAddress|_glXGetProcAddress|_glXGetProcAddressARB|_eglGetProcAddress|_glXCreateContext|_glXMakeCurrent|_glXSwapBuffers|_glGetString|_glClear|_glViewport|_glStencilFunc|_glStencilOp|_glGetFloatv|_glGetError" | tee key_symbols.txt || true
 
           echo "=== Dynamic external symbols ==="
-          nm -gU libgl4es_116.dylib | grep -E "_gl4es_GetProcAddress|_glGetProcAddress|_glXGetProcAddress|_glXGetProcAddressARB|_eglGetProcAddress|_glXCreateContext|_glXMakeCurrent|_glXSwapBuffers|_glGetString|_glClear|_glViewport|_glStencilFunc|_glStencilOp|_glGetFloatv" | tee exported_symbols.txt || true
+          nm -gU libgl4es_116.dylib | grep -E "_gl4es_GetProcAddress|_glGetProcAddress|_glXGetProcAddress|_glXGetProcAddressARB|_eglGetProcAddress|_glXCreateContext|_glXMakeCurrent|_glXSwapBuffers|_glGetString|_glClear|_glViewport|_glStencilFunc|_glStencilOp|_glGetFloatv|_glGetError" | tee exported_symbols.txt || true
 
           echo "=== Required symbol check ==="
-          REQUIRED="_glGetProcAddress _glXGetProcAddress _glXGetProcAddressARB _eglGetProcAddress _glGetString _glViewport"
+          REQUIRED="_glGetProcAddress _glXGetProcAddress _glXGetProcAddressARB _eglGetProcAddress _glGetString _glViewport _glGetError"
           for sym in $REQUIRED; do
             if ! nm -gU libgl4es_116.dylib | grep -q "$sym"; then
               echo "Missing required symbol: $sym"
@@ -360,7 +384,7 @@ jobs:
           nm -u libgl4es_116.dylib | tee undefined_symbols.txt || true
 
           echo "=== Strings ==="
-          strings libgl4es_116.dylib | grep -Ei "GL4ES|LIBGL|gl4es116|GetProcAddress|eglGetProcAddress|glXGetProcAddress|glGetString|glClear|glViewport" | head -400 | tee strings_check.txt || true
+          strings libgl4es_116.dylib | grep -Ei "OpenGLES.framework|GL4ES|LIBGL|gl4es116|GetProcAddress|eglGetProcAddress|glXGetProcAddress|glGetString|glClear|glViewport|glGetError" | head -500 | tee strings_check.txt || true
 
       - name: Upload libgl4es_116
         uses: actions/upload-artifact@v4
