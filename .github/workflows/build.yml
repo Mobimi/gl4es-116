@@ -174,6 +174,26 @@ jobs:
           typedef unsigned int GLbitfield;
           typedef int GLsizei;
           typedef unsigned char GLubyte;
+          typedef unsigned char GLboolean;
+
+          #define GL_VENDOR 0x1F00
+          #define GL_RENDERER 0x1F01
+          #define GL_VERSION 0x1F02
+          #define GL_EXTENSIONS 0x1F03
+          #define GL_SHADING_LANGUAGE_VERSION 0x8B8C
+
+          #define GL_MAX_TEXTURE_SIZE 0x0D33
+          #define GL_MAX_TEXTURE_UNITS 0x84E2
+          #define GL_MAX_TEXTURE_IMAGE_UNITS 0x8872
+          #define GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS 0x8B4C
+          #define GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS 0x8B4D
+          #define GL_MAX_VERTEX_ATTRIBS 0x8869
+          #define GL_MAX_VERTEX_UNIFORM_VECTORS 0x8DFB
+          #define GL_MAX_FRAGMENT_UNIFORM_VECTORS 0x8DFD
+          #define GL_MAX_VARYING_VECTORS 0x8DFC
+          #define GL_MAX_RENDERBUFFER_SIZE 0x84E8
+          #define GL_MAX_VIEWPORT_DIMS 0x0D3A
+          #define GL_NUM_EXTENSIONS 0x821D
 
           __attribute__((visibility("default")))
           void *gl4es_GetProcAddress(const char *name);
@@ -270,7 +290,42 @@ jobs:
                   }
               }
 
-              return gl4es_glGetString(name);
+              /*
+               * Do NOT fallback to gl4es_glGetString here.
+               * GL4ES 1.1.6 currently crashes if its internal GLES pointer is NULL.
+               */
+              switch (name) {
+                  case GL_VENDOR:
+                      return (const GLubyte *)"Apple";
+                  case GL_RENDERER:
+                      return (const GLubyte *)"Apple OpenGLES via gl4es116";
+                  case GL_VERSION:
+                      return (const GLubyte *)"OpenGL ES 2.0";
+                  case GL_EXTENSIONS:
+                      return (const GLubyte *)"";
+                  case GL_SHADING_LANGUAGE_VERSION:
+                      return (const GLubyte *)"OpenGL ES GLSL ES 1.00";
+                  default:
+                      return (const GLubyte *)"";
+              }
+          }
+
+          __attribute__((visibility("default")))
+          const GLubyte *glGetStringi(GLenum name, GLuint index) {
+              static const GLubyte *(*real_glGetStringi)(GLenum, GLuint) = 0;
+
+              if (!real_glGetStringi) {
+                  real_glGetStringi = (const GLubyte *(*)(GLenum, GLuint))gl4es116_gles_sym("glGetStringi");
+              }
+
+              if (real_glGetStringi) {
+                  const GLubyte *ret = real_glGetStringi(name, index);
+                  if (ret) {
+                      return ret;
+                  }
+              }
+
+              return (const GLubyte *)"";
           }
 
           __attribute__((visibility("default")))
@@ -286,7 +341,10 @@ jobs:
                   return;
               }
 
-              gl4es_glClear(mask);
+              /*
+               * Do not fallback to gl4es_glClear.
+               * It can crash if GL4ES internal GLES pointer is NULL.
+               */
           }
 
           __attribute__((visibility("default")))
@@ -301,8 +359,6 @@ jobs:
                   real_glViewport(x, y, width, height);
                   return;
               }
-
-              gl4es_glViewport(x, y, width, height);
           }
 
           __attribute__((visibility("default")))
@@ -317,8 +373,6 @@ jobs:
                   real_glClearColor(red, green, blue, alpha);
                   return;
               }
-
-              gl4es_glClearColor(red, green, blue, alpha);
           }
 
           __attribute__((visibility("default")))
@@ -333,8 +387,6 @@ jobs:
                   real_glEnable(cap);
                   return;
               }
-
-              gl4es_glEnable(cap);
           }
 
           __attribute__((visibility("default")))
@@ -349,8 +401,6 @@ jobs:
                   real_glDisable(cap);
                   return;
               }
-
-              gl4es_glDisable(cap);
           }
 
           __attribute__((visibility("default")))
@@ -368,6 +418,9 @@ jobs:
 
               if (params) {
                   params[0] = 0.0f;
+                  params[1] = 0.0f;
+                  params[2] = 0.0f;
+                  params[3] = 0.0f;
               }
           }
 
@@ -384,8 +437,63 @@ jobs:
                   return;
               }
 
-              if (params) {
-                  params[0] = 0;
+              if (!params) {
+                  return;
+              }
+
+              switch (pname) {
+                  case GL_MAX_TEXTURE_SIZE:
+                      params[0] = 4096;
+                      return;
+
+                  case GL_MAX_TEXTURE_UNITS:
+                      params[0] = 8;
+                      return;
+
+                  case GL_MAX_TEXTURE_IMAGE_UNITS:
+                      params[0] = 8;
+                      return;
+
+                  case GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS:
+                      params[0] = 0;
+                      return;
+
+                  case GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS:
+                      params[0] = 8;
+                      return;
+
+                  case GL_MAX_VERTEX_ATTRIBS:
+                      params[0] = 16;
+                      return;
+
+                  case GL_MAX_VERTEX_UNIFORM_VECTORS:
+                      params[0] = 128;
+                      return;
+
+                  case GL_MAX_FRAGMENT_UNIFORM_VECTORS:
+                      params[0] = 64;
+                      return;
+
+                  case GL_MAX_VARYING_VECTORS:
+                      params[0] = 8;
+                      return;
+
+                  case GL_MAX_RENDERBUFFER_SIZE:
+                      params[0] = 4096;
+                      return;
+
+                  case GL_MAX_VIEWPORT_DIMS:
+                      params[0] = 4096;
+                      params[1] = 4096;
+                      return;
+
+                  case GL_NUM_EXTENSIONS:
+                      params[0] = 0;
+                      return;
+
+                  default:
+                      params[0] = 0;
+                      return;
               }
           }
 
@@ -416,8 +524,6 @@ jobs:
                   real_glStencilFunc(func, ref, mask);
                   return;
               }
-
-              gl4es_glStencilFunc(func, ref, mask);
           }
 
           __attribute__((visibility("default")))
@@ -432,8 +538,6 @@ jobs:
                   real_glStencilOp(fail, zfail, zpass);
                   return;
               }
-
-              gl4es_glStencilOp(fail, zfail, zpass);
           }
           EOF
 
