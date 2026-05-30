@@ -129,38 +129,37 @@ jobs:
           PY
 
           # Force GL4ES loader to use OpenGLES.framework on iOS.
-          # Force GL4ES loader to know the iOS OpenGLES framework path.
           python3 << 'PY'
           from pathlib import Path
 
           p = Path("src/gl/loader.c")
           s = p.read_text()
 
-          framework = '"/System/Library/Frameworks/OpenGLES.framework/OpenGLES"'
+          framework_path = "/System/Library/Frameworks/OpenGLES.framework/OpenGLES"
 
-          # Add a visible fallback path string near the top of loader.c.
-          if "GL4ES_IOS_OPENGLES_FRAMEWORK" not in s:
-              marker = '#include'
-              first_include = s.find(marker)
-              line_end = s.find("\n", first_include)
-              inject = '\n#ifndef GL4ES_IOS_OPENGLES_FRAMEWORK\n#define GL4ES_IOS_OPENGLES_FRAMEWORK ' + framework + '\n#endif\n'
-              s = s[:line_end + 1] + inject + s[line_end + 1:]
+          # Force DEFAULT_GLES inside loader.c itself.
+          s = s.replace(
+              "#ifndef DEFAULT_GLES\n#define DEFAULT_GLES NULL\n#endif",
+              "#undef DEFAULT_GLES\n#define DEFAULT_GLES \"" + framework_path + "\""
+          )
 
-          # Replace common GLES loader names if present.
-          for old in [
-              '"libGLESv2.so"',
-              '"libGLESv1_CM.so"',
-              '"libGLESv2"',
-              '"libGLESv1_CM"',
-              '"libGLES_CM"',
-              '"libGLESv2_CM"',
-              '"GLESv2"',
-              '"GLESv1_CM"'
-          ]:
-              s = s.replace(old, "GL4ES_IOS_OPENGLES_FRAMEWORK")
+          # Keep the path visible in the final dylib so inspect can verify it.
+          if "gl4es_ios_opengles_framework_path" not in s:
+              first_newline = s.find("\n")
+              inject = (
+                  "\n__attribute__((used)) "
+                  "static const char *gl4es_ios_opengles_framework_path = "
+                  "\"" + framework_path + "\";\n"
+              )
+              s = s[:first_newline + 1] + inject + s[first_newline + 1:]
+
+          # On Apple, try symbols from the loaded GLES framework first.
+          old = "#elif defined __APPLE__ // apple code seems to use RTLD_NEXT which is usually ((void*)-1) // remove if it not needed return dlsym((void*)(~(uintptr_t)0), name);"
+          new = "#elif defined __APPLE__\n    if(lib) { void *p = dlsym(lib, name); if(p) return p; }\n    return dlsym((void*)(~(uintptr_t)0), name);"
+          s = s.replace(old, new)
 
           p.write_text(s)
-          print("Patched loader.c: injected GL4ES_IOS_OPENGLES_FRAMEWORK")
+          print("Patched loader.c: forced DEFAULT_GLES to OpenGLES.framework and fixed Apple dlsym path")
           PY
 
           # Provide exported OpenGL / GLX / EGL proc-address symbols for LWJGL/iOS.
@@ -346,7 +345,7 @@ jobs:
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DPLATFORM=OS64 \
             -DDEFAULT_ES=2 \
-            -DDEFAULT_GLES="/System/Library/Frameworks/OpenGLES.framework/OpenGLES" \
+            -DDEFAULT_GLES=/System/Library/Frameworks/OpenGLES.framework/OpenGLES \
             -DNOX11=ON \
             -DNOEGL=ON \
             -DSTATICLIB=OFF \
@@ -357,7 +356,7 @@ jobs:
             -DCMAKE_XCODE_ATTRIBUTE_GCC_SYMBOLS_PRIVATE_EXTERN=NO \
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
             -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED=NO \
-            -DCMAKE_C_FLAGS="-fvisibility=default -Wno-error=implicit-function-declaration -Wno-error=unused-function -DDEFAULT_GLES='\"/System/Library/Frameworks/OpenGLES.framework/OpenGLES\"'" \
+            -DCMAKE_C_FLAGS="-fvisibility=default -Wno-error=implicit-function-declaration -Wno-error=unused-function" \
             -DCMAKE_SHARED_LINKER_FLAGS="-framework OpenGLES -framework Foundation -framework QuartzCore -framework UIKit"
 
           cmake --build build --config RelWithDebInfo --target GL
