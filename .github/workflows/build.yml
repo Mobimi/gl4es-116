@@ -165,6 +165,7 @@ jobs:
           # Provide exported OpenGL / GLX / EGL proc-address symbols for LWJGL/iOS.
           cat > src/gl/ios_exports.c << 'EOF'
           #include <stdio.h>
+          #include <dlfcn.h>
 
           typedef unsigned int GLenum;
           typedef int GLint;
@@ -265,7 +266,24 @@ jobs:
 
           __attribute__((visibility("default")))
           GLenum glGetError(void) {
-              return gl4es_glGetError();
+              static GLenum (*real_glGetError)(void) = 0;
+
+              if (!real_glGetError) {
+                  void *lib = dlopen(
+                      "/System/Library/Frameworks/OpenGLES.framework/OpenGLES",
+                      RTLD_LAZY | RTLD_GLOBAL
+                  );
+
+                  if (lib) {
+                      real_glGetError = (GLenum (*)(void))dlsym(lib, "glGetError");
+                  }
+              }
+
+              if (real_glGetError) {
+                  return real_glGetError();
+              }
+
+              return 0;
           }
 
           __attribute__((visibility("default")))
