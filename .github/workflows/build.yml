@@ -173,6 +173,7 @@ jobs:
           typedef float GLfloat;
           typedef unsigned int GLbitfield;
           typedef int GLsizei;
+          typedef unsigned char GLubyte;
 
           __attribute__((visibility("default")))
           void *gl4es_GetProcAddress(const char *name);
@@ -188,6 +189,36 @@ jobs:
           GLenum gl4es_glGetError(void);
           void gl4es_glStencilFunc(GLenum func, GLint ref, GLuint mask);
           void gl4es_glStencilOp(GLenum fail, GLenum zfail, GLenum zpass);
+
+          static void *gl4es116_gles_lib(void) {
+              static void *lib = 0;
+
+              if (!lib) {
+                  lib = dlopen(
+                      "/System/Library/Frameworks/OpenGLES.framework/OpenGLES",
+                      RTLD_LAZY | RTLD_GLOBAL
+                  );
+              }
+
+              return lib;
+          }
+
+          static void *gl4es116_gles_sym(const char *name) {
+              void *lib = gl4es116_gles_lib();
+
+              if (!lib) {
+                  fprintf(stderr, "[gl4es116] failed to dlopen OpenGLES.framework\n");
+                  return 0;
+              }
+
+              void *p = dlsym(lib, name);
+
+              if (!p) {
+                  fprintf(stderr, "[gl4es116] dlsym(%s) = NULL\n", name ? name : "(null)");
+              }
+
+              return p;
+          }
 
           __attribute__((visibility("default")))
           void *gl4es_GetProcAddress_export(const char *name) {
@@ -225,43 +256,137 @@ jobs:
           }
 
           __attribute__((visibility("default")))
-          const unsigned char *glGetString(GLenum name) {
+          const GLubyte *glGetString(GLenum name) {
+              static const GLubyte *(*real_glGetString)(GLenum) = 0;
+
+              if (!real_glGetString) {
+                  real_glGetString = (const GLubyte *(*)(GLenum))gl4es116_gles_sym("glGetString");
+              }
+
+              if (real_glGetString) {
+                  const GLubyte *ret = real_glGetString(name);
+                  if (ret) {
+                      return ret;
+                  }
+              }
+
               return gl4es_glGetString(name);
           }
 
           __attribute__((visibility("default")))
           void glClear(GLbitfield mask) {
+              static void (*real_glClear)(GLbitfield) = 0;
+
+              if (!real_glClear) {
+                  real_glClear = (void (*)(GLbitfield))gl4es116_gles_sym("glClear");
+              }
+
+              if (real_glClear) {
+                  real_glClear(mask);
+                  return;
+              }
+
               gl4es_glClear(mask);
           }
 
           __attribute__((visibility("default")))
           void glViewport(GLint x, GLint y, GLsizei width, GLsizei height) {
+              static void (*real_glViewport)(GLint, GLint, GLsizei, GLsizei) = 0;
+
+              if (!real_glViewport) {
+                  real_glViewport = (void (*)(GLint, GLint, GLsizei, GLsizei))gl4es116_gles_sym("glViewport");
+              }
+
+              if (real_glViewport) {
+                  real_glViewport(x, y, width, height);
+                  return;
+              }
+
               gl4es_glViewport(x, y, width, height);
           }
 
           __attribute__((visibility("default")))
           void glClearColor(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha) {
+              static void (*real_glClearColor)(GLfloat, GLfloat, GLfloat, GLfloat) = 0;
+
+              if (!real_glClearColor) {
+                  real_glClearColor = (void (*)(GLfloat, GLfloat, GLfloat, GLfloat))gl4es116_gles_sym("glClearColor");
+              }
+
+              if (real_glClearColor) {
+                  real_glClearColor(red, green, blue, alpha);
+                  return;
+              }
+
               gl4es_glClearColor(red, green, blue, alpha);
           }
 
           __attribute__((visibility("default")))
           void glEnable(GLenum cap) {
+              static void (*real_glEnable)(GLenum) = 0;
+
+              if (!real_glEnable) {
+                  real_glEnable = (void (*)(GLenum))gl4es116_gles_sym("glEnable");
+              }
+
+              if (real_glEnable) {
+                  real_glEnable(cap);
+                  return;
+              }
+
               gl4es_glEnable(cap);
           }
 
           __attribute__((visibility("default")))
           void glDisable(GLenum cap) {
+              static void (*real_glDisable)(GLenum) = 0;
+
+              if (!real_glDisable) {
+                  real_glDisable = (void (*)(GLenum))gl4es116_gles_sym("glDisable");
+              }
+
+              if (real_glDisable) {
+                  real_glDisable(cap);
+                  return;
+              }
+
               gl4es_glDisable(cap);
           }
 
           __attribute__((visibility("default")))
           void glGetFloatv(GLenum pname, GLfloat *params) {
-              gl4es_glGetFloatv(pname, params);
+              static void (*real_glGetFloatv)(GLenum, GLfloat *) = 0;
+
+              if (!real_glGetFloatv) {
+                  real_glGetFloatv = (void (*)(GLenum, GLfloat *))gl4es116_gles_sym("glGetFloatv");
+              }
+
+              if (real_glGetFloatv) {
+                  real_glGetFloatv(pname, params);
+                  return;
+              }
+
+              if (params) {
+                  params[0] = 0.0f;
+              }
           }
 
           __attribute__((visibility("default")))
           void glGetIntegerv(GLenum pname, GLint *params) {
-              gl4es_glGetIntegerv(pname, params);
+              static void (*real_glGetIntegerv)(GLenum, GLint *) = 0;
+
+              if (!real_glGetIntegerv) {
+                  real_glGetIntegerv = (void (*)(GLenum, GLint *))gl4es116_gles_sym("glGetIntegerv");
+              }
+
+              if (real_glGetIntegerv) {
+                  real_glGetIntegerv(pname, params);
+                  return;
+              }
+
+              if (params) {
+                  params[0] = 0;
+              }
           }
 
           __attribute__((visibility("default")))
@@ -269,14 +394,7 @@ jobs:
               static GLenum (*real_glGetError)(void) = 0;
 
               if (!real_glGetError) {
-                  void *lib = dlopen(
-                      "/System/Library/Frameworks/OpenGLES.framework/OpenGLES",
-                      RTLD_LAZY | RTLD_GLOBAL
-                  );
-
-                  if (lib) {
-                      real_glGetError = (GLenum (*)(void))dlsym(lib, "glGetError");
-                  }
+                  real_glGetError = (GLenum (*)(void))gl4es116_gles_sym("glGetError");
               }
 
               if (real_glGetError) {
@@ -288,11 +406,33 @@ jobs:
 
           __attribute__((visibility("default")))
           void glStencilFunc(GLenum func, GLint ref, GLuint mask) {
+              static void (*real_glStencilFunc)(GLenum, GLint, GLuint) = 0;
+
+              if (!real_glStencilFunc) {
+                  real_glStencilFunc = (void (*)(GLenum, GLint, GLuint))gl4es116_gles_sym("glStencilFunc");
+              }
+
+              if (real_glStencilFunc) {
+                  real_glStencilFunc(func, ref, mask);
+                  return;
+              }
+
               gl4es_glStencilFunc(func, ref, mask);
           }
 
           __attribute__((visibility("default")))
           void glStencilOp(GLenum fail, GLenum zfail, GLenum zpass) {
+              static void (*real_glStencilOp)(GLenum, GLenum, GLenum) = 0;
+
+              if (!real_glStencilOp) {
+                  real_glStencilOp = (void (*)(GLenum, GLenum, GLenum))gl4es116_gles_sym("glStencilOp");
+              }
+
+              if (real_glStencilOp) {
+                  real_glStencilOp(fail, zfail, zpass);
+                  return;
+              }
+
               gl4es_glStencilOp(fail, zfail, zpass);
           }
           EOF
