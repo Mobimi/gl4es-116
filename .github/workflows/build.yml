@@ -398,6 +398,9 @@ jobs:
           echo "=== Strings ==="
           strings libgl4es_116.dylib | grep -Ei "OpenGLES.framework|GL4ES|LIBGL|gl4es116|GetProcAddress|eglGetProcAddress|glXGetProcAddress|glGetString|glClear|glViewport|glGetError" | head -500 | tee strings_check.txt || true
 
+          echo "=== OpenGLES framework string check ==="
+          strings libgl4es_116.dylib | grep -F "OpenGLES.framework" | tee opengles_string.txt || true
+
       - name: Upload libgl4es_116
         uses: actions/upload-artifact@v4
         with:
@@ -415,3 +418,4 @@ jobs:
             exported_symbols.txt
             undefined_symbols.txt
             strings_check.txt
+            opengles_string.txt
