@@ -131,6 +131,7 @@ jobs:
           # Provide exported OpenGL / GLX / EGL proc-address symbols for LWJGL/iOS.
           cat > src/gl/ios_exports.c << 'EOF'
           #include <stdio.h>
+
           typedef unsigned int GLenum;
           typedef int GLint;
           typedef unsigned int GLuint;
@@ -155,27 +156,37 @@ jobs:
 
           __attribute__((visibility("default")))
           void *gl4es_GetProcAddress_export(const char *name) {
-              return gl4es_GetProcAddress(name);
+              void *p = gl4es_GetProcAddress(name);
+              fprintf(stderr, "[gl4es116] gl4es_GetProcAddress_export(%s) = %p\n", name ? name : "(null)", p);
+              return p;
           }
 
           __attribute__((visibility("default")))
           void *glGetProcAddress(const char *name) {
-              return gl4es_GetProcAddress(name);
+              void *p = gl4es_GetProcAddress(name);
+              fprintf(stderr, "[gl4es116] glGetProcAddress(%s) = %p\n", name ? name : "(null)", p);
+              return p;
           }
 
           __attribute__((visibility("default")))
           void *glXGetProcAddress(const unsigned char *name) {
-              return gl4es_GetProcAddress((const char *)name);
+              void *p = gl4es_GetProcAddress((const char *)name);
+              fprintf(stderr, "[gl4es116] glXGetProcAddress(%s) = %p\n", name ? (const char *)name : "(null)", p);
+              return p;
           }
 
           __attribute__((visibility("default")))
           void *glXGetProcAddressARB(const unsigned char *name) {
-              return gl4es_GetProcAddress((const char *)name);
+              void *p = gl4es_GetProcAddress((const char *)name);
+              fprintf(stderr, "[gl4es116] glXGetProcAddressARB(%s) = %p\n", name ? (const char *)name : "(null)", p);
+              return p;
           }
 
           __attribute__((visibility("default")))
           void *eglGetProcAddress(const char *name) {
-              return gl4es_GetProcAddress(name);
+              void *p = gl4es_GetProcAddress(name);
+              fprintf(stderr, "[gl4es116] eglGetProcAddress(%s) = %p\n", name ? name : "(null)", p);
+              return p;
           }
 
           __attribute__((visibility("default")))
@@ -349,7 +360,7 @@ jobs:
           nm -u libgl4es_116.dylib | tee undefined_symbols.txt || true
 
           echo "=== Strings ==="
-          strings libgl4es_116.dylib | grep -Ei "GL4ES|LIBGL|GetProcAddress|eglGetProcAddress|glXGetProcAddress|glGetString|glClear|glViewport" | head -300 | tee strings_check.txt || true
+          strings libgl4es_116.dylib | grep -Ei "GL4ES|LIBGL|gl4es116|GetProcAddress|eglGetProcAddress|glXGetProcAddress|glGetString|glClear|glViewport" | head -400 | tee strings_check.txt || true
 
       - name: Upload libgl4es_116
         uses: actions/upload-artifact@v4
